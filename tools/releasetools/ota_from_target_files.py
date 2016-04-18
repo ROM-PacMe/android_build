@@ -146,6 +146,7 @@ OPTIONS.fallback_to_full = True
 OPTIONS.full_radio = False
 OPTIONS.full_bootloader = False
 OPTIONS.backuptool = False
+OPTIONS.wipe_caches = False
 OPTIONS.override_device = 'auto'
 OPTIONS.override_prop = False
 
@@ -625,10 +626,36 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
   script.SetPermissionsRecursive("/tmp/install", 0, 0, 0o755, 0o644, None, None)
   script.SetPermissionsRecursive("/tmp/install/bin", 0, 0, 0o755, 0o755, None, None)
 
+  script.Print("******************************************");
+  script.Print("*                CreeperOS                ");
+  script.Print("******************************************");
+  script.Print("*               Developers:               ");
+  script.Print("*                -TecnoDV                *");
+  script.Print("*               -ROM-PacMe               *");
+  script.Print("******************************************");
+
+  builddate = GetBuildProp("ro.build.date", OPTIONS.info_dict)
+ # releasetype = GetBuildProp("ro.cm.releasetype", OPTIONS.info_dict)
+ # script.Print("*   Release: %s"%(releasetype));
+  script.Print("*   Build date: %s"%(builddate));
+
+#  if OPTIONS.override_prop:
+#    product = GetBuildProp("ro.build.product", OPTIONS.info_dict)
+#    script.Print("*   Product: %s"%(product));
+#  else:
+  device = GetBuildProp("ro.product.device", OPTIONS.info_dict)
+  model = GetBuildProp("ro.product.model", OPTIONS.info_dict)
+  script.Print("*   Device: %s (%s)"%(model, device));
+  script.Print("******************************************");
+
   if OPTIONS.backuptool:
+    script.Print("{*} Running backup scripts...")
+    script.AppendExtra("if ! is_mounted(\"/system\") then")
     script.Mount("/system")
+    script.AppendExtra("endif;")
     script.RunBackup("backup")
     script.Unmount("/system")
+    script.Print("{*} Done.")
 
   system_progress = 0.75
 
@@ -654,23 +681,29 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
   system_items = ItemSet("system", "META/filesystem_config.txt")
   script.ShowProgress(system_progress, 0)
 
+  script.Print("{*} Following operation takes time, please wait...")
   if block_based:
     # Full OTA is done as an "incremental" against an empty source
     # image.  This has the effect of writing new data from the package
     # to the entire partition, but lets us reuse the updater code that
     # writes incrementals to do it.
+    script.Print("{*} Installation is block based")
     system_tgt = GetImage("system", OPTIONS.input_tmp, OPTIONS.info_dict)
     system_tgt.ResetFileMap()
     system_diff = common.BlockDifference("system", system_tgt, src=None)
     system_diff.WriteScript(script, output_zip)
   else:
+    script.Print("{*} Installation is file based")
+    script.Print("{*} Formatting /system")
     script.FormatPartition("/system")
     script.Mount("/system", recovery_mount_options)
     if not has_recovery_patch:
       script.UnpackPackageDir("recovery", "/system")
+    script.Print("{*} Extracting /system")
     script.UnpackPackageDir("system", "/system")
 
     symlinks = CopyPartitionFiles(system_items, input_zip, output_zip)
+    script.Print("{*} Symlinking")
     script.MakeSymlinks(symlinks)
 
   boot_img = common.GetBootableImage("boot.img", "boot.img",
@@ -684,6 +717,7 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
     common.MakeRecoveryPatch(OPTIONS.input_tmp, output_sink,
                              recovery_img, boot_img)
 
+    script.Print("{*} Setting permissions")
     system_items.GetMetadata(input_zip)
     system_items.Get("system").SetPermissions(script)
 
@@ -712,16 +746,37 @@ else if get_stage("%(bcb_dev)s") == "3/3" then
 
   device_specific.FullOTA_PostValidate()
 
+  if block_based:
+    script.AppendExtra("if ! is_mounted(\"/system\") then")
+    script.Mount("/system")
+    script.AppendExtra("endif;")
+
   if OPTIONS.backuptool:
+    script.Print("{*} Restoring backup")
     script.ShowProgress(0.02, 10)
-    if block_based:
-      script.Mount("/system")
     script.RunBackup("restore")
-    if block_based:
-      script.Unmount("/system")
+
+  if block_based:
+    script.AppendExtra("if is_mounted(\"/system\") then")
+    script.Unmount("/system")
+    script.AppendExtra("endif;")
+
+
+  if OPTIONS.wipe_caches:
+    script.Print("{*} Wiping caches")
+    script.FormatPartition("/cache")
+    script.AppendExtra("if ! is_mounted(\"/data\") then")
+    script.Mount("/data")
+    script.AppendExtra("endif;")
+    script.AppendExtra("""delete_recursive("/data/dalvik-cache");""");
+    script.AppendExtra("""delete_recursive("/cache");""");
+
+  script.Print("{*} Flashing boot.img")
 
   script.ShowProgress(0.05, 5)
   script.WriteRawImage("/boot", "boot.img")
+
+  script.Print("CreeperOS is Ready to Use in your Device :D");
 
   script.ShowProgress(0.2, 10)
   device_specific.FullOTA_InstallEnd()
